@@ -39,7 +39,8 @@ def main(argv: list[str] | None = None) -> int:
         api_key = getpass.getpass("Gemini API key (input hidden, Enter to skip): ").strip() or None
     clf = make_classifier(args.provider, api_key=api_key, gcp_project=args.gcp_project)
     if clf is None:
-        print("No GEMINI_API_KEY or ANTHROPIC_API_KEY found (or --provider rules): running the offline keyword classifier. "
+        print("No Gemini key, Google Cloud project or Anthropic key supplied (or --provider rules): "
+              "running the offline keyword classifier. "
               "Everything will be routed to humans.\n", file=sys.stderr)
     results = asyncio.run(triage_all(msgs, clf, args.concurrency))
 
@@ -74,6 +75,11 @@ def main(argv: list[str] | None = None) -> int:
         tout = sum(r.usage.output_tokens for r in results)
         print(f"model calls {llm_calls} | input tokens {tin} | output tokens {tout} | "
               f"cost ${cost:.5f} | ${cost / llm_calls * 1000:.3f} per 1,000 messages at this mix")
+    failed = [r for r in results if r.classifier == "rules (llm failed)"]
+    if clf is not None and failed and len(failed) == sum(1 for r in results if r.text):
+        first = next((t.detail for t in failed[0].trace if t.stage == "classifier"), "")
+        print(f"\nWARNING: every model call failed, so everything went to humans. First error: {first[:220]}",
+              file=sys.stderr)
     print(f"full results written to {out}\nobservation report written to {rep}")
     return 0
 
