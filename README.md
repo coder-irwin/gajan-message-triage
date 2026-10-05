@@ -12,43 +12,60 @@ Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/). Without uv, run `pip
 
 ```bash
 uv sync --extra dev --extra api
-cp .env.example .env          # then paste your key after GEMINI_API_KEY=
-uv run python -m triage data/messages.json
-uv run pytest -q              # 26 behaviour tests, no API key needed
+uv run pytest -q                                   # 28 behaviour tests, no key needed
+uv run python -m triage data/messages.json --ask-key
 ```
+
+`--ask-key` prompts for your Gemini API key with hidden input. Press Enter without a key to run offline.
 
 Each run writes two files:
 
 | File | What it is |
 |---|---|
-| `output/OBSERVATION.md` | Readable report: run summary, cost, where every message went, and a step-by-step trace per message |
+| `output/OBSERVATION.md` | Readable report: run summary, measured cost, where every message went, and a step-by-step trace per message |
 | `output/results.json` | The full machine-readable result for every message |
+
+`sample_output/` holds real runs on the supplied file: the default `gemini-3.5-flash-lite`, the cheaper `gemini-2.5-flash-lite` for comparison, and the offline rules mode.
+
+### Bring your own key
+
+The service has no key of its own. Supply one of these. A key is held in memory for the run and is never written to output or logs.
+
+| Option | How |
+|---|---|
+| Hidden prompt | `--ask-key` |
+| Environment or `.env` file | `cp .env.example .env`, then set `GEMINI_API_KEY`. `.env` is git-ignored. |
+| Google Cloud project instead of a key | `--gcp-project YOUR_PROJECT`, or `TRIAGE_GCP_PROJECT` in `.env`. This calls Gemini through Vertex AI and needs `gcloud auth application-default login` first. |
+| Per request on the HTTP service | Send the header `X-Gemini-Api-Key` |
+
+With no key at all, the offline rules classifier runs and every message goes to a human.
 
 HTTP service, using the same pipeline:
 
 ```bash
 uv run uvicorn triage.api:app --port 8000
 curl -s localhost:8000/triage -H 'content-type: application/json' \
+  -H "X-Gemini-Api-Key: $GEMINI_API_KEY" \
   -d '{"id":"t1","brand":"hair-studio","channel":"instagram","text":"are you open on sundays"}'
 ```
 
-### Providers
-
-The service picks a provider automatically. Force one with `--provider gemini|claude|rules`.
+### Providers and models
 
 | Provider | Used when | Behaviour |
 |---|---|---|
-| Gemini (default) | `GEMINI_API_KEY` is set | Full classification with `gemini-2.5-flash-lite`. Low-risk messages can be automated. |
-| Claude | `ANTHROPIC_API_KEY` is set and no Gemini key | Same prompt, schema and policy, using `claude-opus-5-5` by default |
-| Offline rules | No key | Keyword classifier. Everything goes to a human, in roughly the right queue. |
+| Gemini (default) | A Gemini key or Google Cloud project is supplied | Full classification with `gemini-3.5-flash-lite`. Low-risk messages can be automated. |
+| Claude | `ANTHROPIC_API_KEY` is set and no Gemini credentials | Same prompt, schema and policy, using `claude-opus-5-5` |
+| Offline rules | No credentials | Keyword classifier. Everything goes to a human, in roughly the right queue. |
 
 If a single call fails, is refused, or returns invalid output, that message alone falls back to rules and goes to a human. Rate-limit errors are retried with backoff first.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `GEMINI_MODEL` | `gemini-2.5-flash-lite` | Any Gemini text model. Priced ones are listed in `triage/gemini.py`. |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Any Gemini text model. Priced ones are listed in `triage/gemini.py`. |
+| `TRIAGE_PROVIDER` | `auto` | Force `gemini`, `claude` or `rules`. Same as `--provider`. |
 | `TRIAGE_MODEL` | `claude-opus-5-5` | Claude model, when using Claude |
-| `TRIAGE_PROVIDER` | `auto` | Force `gemini`, `claude` or `rules` |
+
+The cheaper `gemini-2.5-flash-lite` is closed to new Gemini API keys, so it cannot be the default. It still works through Vertex AI.
 
 ## How it works
 
@@ -71,7 +88,7 @@ file ──► ingest ──► signals ──► classifier ──► policy �
 
 ```json
 {
-  "message_id": "MSG-008", "status": "ok", "classifier": "llm:gemini-2.5-flash-lite",
+  "message_id": "MSG-008", "status": "ok", "classifier": "llm:gemini-3.5-flash-lite",
   "language": "en", "summary": "...",
   "intents": [{"intent": "refund_request", "detail": "...", "confidence": "high"},
               {"intent": "purchase_request", "detail": "...", "confidence": "high"}],
@@ -80,7 +97,8 @@ file ──► ingest ──► signals ──► classifier ──► policy �
   "routing": {"handler": "human", "queue": "vitalis-wellness:billing",
               "secondary_queues": ["vitalis-wellness:sales"], "priority": "P2",
               "response_sla": "4 hours", "action": "...", "reasons": ["H3 not on automation allow-list: ..."]},
-  "suggested_reply": "draft for the agent", "open_questions": ["..."], "usage": {"cost_usd": 0.0003}
+  "suggested_reply": "draft for the agent", "reply_source": "model_draft_for_agent",
+  "draft_warnings": ["promises a refund"], "open_questions": ["..."], "usage": {"cost_usd": 0.0016}
 }
 ```
 
@@ -101,39 +119,37 @@ A message goes to a human if any of these hold. Otherwise automation acts.
 | H7 | The automated action needs an identifier the message lacks |
 | H8 | Damaged input record: unknown brand, truncated |
 
-The automation allow-list is deliberately narrow and covers only reversible, low-risk actions. These are an order-status lookup, an answer from the brand FAQ or price list, a booking link, a thank-you, and a marketing opt-out. Refunds, cancellations, booking changes, payments and health questions always go to a person. On this file only a handful of messages are even eligible: the tracking question with an order id, the opening-hours and price questions, the two thank-yous, and the bare unsubscribe. Everything else needs a person by design.
+The automation allow-list is deliberately narrow and covers only reversible, low-risk actions. These are an order-status lookup, an answer from the brand FAQ or price list, a booking link, a thank-you, and a marketing opt-out. Refunds, cancellations, booking changes, payments and health questions always go to a person. Automation never sends model-written text. It sends a fixed template owned by code, with slots filled from the carrier API or the brand knowledge base. In the live run the model drafted "Yes, we are open on Sundays" with no knowledge of the salon's hours. Model drafts only ever go to agents, and drafts that promise refunds, timelines or calls are flagged for checking.
+
+In the live run, 5 of 25 messages were automated: the tracking question with an order id, the two thank-yous, the bare unsubscribe, and the opening-hours question. The balayage price question went to a person because the model was only medium-confident it was also a booking request. Everything else needs a person by design.
 
 ## Cost per 1,000 messages
 
-At 10,000 messages a day, traffic averages about 7 messages a minute. Peaks will be higher. One small worker handles this with a few concurrent calls. A free-tier key will hit per-minute and per-day limits, so production needs a paid key.
+These are measured, not estimated. They come from the API's own token counts on the supplied 25 messages. The empty message skips the model, so there were 24 calls.
 
-**Why the cheapest model is acceptable here.** The model only labels messages. Every risky decision is made by code: refunds, health questions, injection attempts, payments and emergencies all go to a human whatever the model says. A weaker model can therefore misfile a message, but it cannot cause harm. It still needs checking against labelled examples before automation is trusted.
+| Model | Avg input tokens | Avg output tokens | Per 1,000 messages | Per day at 10k |
+|---|---|---|---|---|
+| `gemini-3.5-flash-lite` (default) | 2,079 | 373 | $1.55 | $15.50 |
+| `gemini-2.5-flash-lite`, Vertex AI only | about 1,000 | about 390 | $0.25 | $2.50 |
 
-**Assumptions** come from measuring this repo's prompt, at roughly 4 characters per token.
-
-| Item | Tokens per message | Notes |
-|---|---|---|
-| System prompt and schema | ~1,650 | About 6,500 characters. Gemini may cache it implicitly. I assumed no caching. |
-| Message and metadata | ~100 | Messages in this file average 295 characters with wrapper |
-| Output JSON | ~300 | Thinking is switched off for 2.5 Flash-Lite |
-
-**Arithmetic for Gemini 2.5 Flash-Lite**, at $0.10 input and $0.40 output per million tokens:
+**How the default's number is built**, at $0.30 input and $2.50 output per million tokens:
 
 ```
-1,750 × $0.10/M + 300 × $0.40/M
-= $0.000175 + $0.000120 = $0.0003 per message
+2,079 × $0.30/M + 373 × $2.50/M
+= $0.00062 + $0.00093 = $0.00155 per message
 ```
 
-| Model | Per 1,000 messages | Per day at 10k |
-|---|---|---|
-| Gemini 2.5 Flash-Lite (default) | ~$0.30 | ~$3 |
-| Gemini 2.5 Flash | ~$1.30 | ~$13 |
-| Claude Haiku 4.5 | ~$3.90 | ~$39 |
-| Claude Opus 5.5 | ~$11 | ~$110 |
+**Assumptions.**
+- Real messages are about as long as these. Input is mostly the fixed system prompt and schema, at about 1,950 tokens, so longer messages barely move the cost.
+- Output is 60 percent of the cost. Shorter output, such as dropping the agent draft, is the main lever after model choice.
+- Thinking is set to minimal. Classification does not need reasoning.
+- Prices are from ai.google.dev/gemini-api/docs/pricing, checked 6 October 2026.
 
-Gemini prices are from ai.google.dev/gemini-api/docs/pricing, checked 6 October 2026. Empty messages skip the model and cost nothing. The Batch API halves the price but is not real time, so a stranded traveller could wait hours. Batch is suitable only for backfills.
+**Throughput.** 10,000 a day averages about 7 messages a minute. Median latency was 2.4 seconds per message, with 4 in flight at once. One worker therefore handles about 100 a minute. Free-tier keys have low per-minute and per-day limits, so production needs a paid key. Rate-limit errors are retried with backoff.
 
-**Measured cost.** With a key, the run prints actual tokens and cost per 1,000 from the API's usage data. The same figures appear in `output/OBSERVATION.md`. Use them over the estimate above.
+**Why the cheapest model is acceptable.** The model only labels messages. Refunds, health questions, injection attempts, payments, emergencies and every outgoing automated reply are controlled by code. A weaker model can misfile a message, but it cannot send an invented answer or approve anything.
+
+The Batch API halves the price but is not real time. Batch is suitable only for backfills.
 
 ## Layout
 

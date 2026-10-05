@@ -247,6 +247,9 @@ def test_gemini_wrapper_parses_and_prices():
     from triage.gemini import GeminiClassifier
     fake = FakeGemini(gemini_response(json.dumps(analysis())))
     a, usage = asyncio.run(GeminiClassifier(client=fake, model="gemini-2.5-flash-lite").classify(_msg()))
+    fake3 = FakeGemini(gemini_response(json.dumps(analysis())))
+    asyncio.run(GeminiClassifier(client=fake3, model="gemini-3.5-flash-lite").classify(_msg()))
+    assert fake3.calls[0]["config"].thinking_config.thinking_level.value.lower() == "minimal"
     assert a.intents[0].intent.value == "general_info"
     cfg = fake.calls[0]["config"]
     assert cfg.response_mime_type == "application/json" and cfg.response_json_schema
@@ -280,3 +283,20 @@ def test_gemini_schema_is_accepted_by_sdk_config():
     from triage.gemini import GEMINI_SCHEMA
     types.GenerateContentConfig(response_mime_type="application/json", response_json_schema=GEMINI_SCHEMA)
     assert "additionalProperties" not in json.dumps(GEMINI_SCHEMA)
+
+
+def test_automation_never_sends_model_text():
+    # Live-run finding: the model drafted "Yes, we are open on Sundays" without knowing the hours.
+    a = analysis(suggested_reply="Yes, we are open on Sundays!")
+    r = by_id(run(ROOT / "data/messages.json", StubClassifier({"MSG-018": a})))["MSG-018"]
+    assert r.routing.handler == "automation"
+    assert r.reply_source == "template"
+    assert "open on Sundays" not in r.suggested_reply
+
+
+def test_agent_draft_with_promises_is_flagged():
+    a = analysis(intents=[{"intent": "refund_request", "detail": "d", "confidence": "high"}],
+                 suggested_reply="I have initiated the refund process and will send it right away.")
+    r = by_id(run(ROOT / "data/messages.json", StubClassifier({"MSG-008": a})))["MSG-008"]
+    assert r.reply_source == "model_draft_for_agent"
+    assert "promises a refund" in r.draft_warnings

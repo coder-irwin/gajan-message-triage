@@ -21,7 +21,7 @@ def build(results: list[TriageResult], classifier_label: str, input_path: str, f
     status = Counter(r.status for r in results)
     queues = Counter(r.routing.queue for r in results)
     flags = Counter(f for r in results for f in r.risk_flags)
-    calls = [r for r in results if r.usage.input_tokens or r.usage.output_tokens or r.usage.cache_read_input_tokens]
+    calls = [r for r in results if r.classifier.startswith("llm:")]
     cost = sum(r.usage.cost_usd for r in results)
     tin = sum(r.usage.input_tokens + r.usage.cache_read_input_tokens for r in calls)
     tcached = sum(r.usage.cache_read_input_tokens for r in calls)
@@ -88,6 +88,8 @@ def build(results: list[TriageResult], classifier_label: str, input_path: str, f
             notable.append(f"- **{r.message_id}: the model invented an identifier,** which was dropped.")
         if r.routing.handler == "automation":
             notable.append(f"- **{r.message_id} was automated.** {r.routing.action}")
+        if r.draft_warnings:
+            notable.append(f"- **{r.message_id}: the model's draft needs checking.** It {', '.join(r.draft_warnings)}.")
     L.extend(notable or ["- Nothing unusual."])
     L.append("")
 
@@ -121,8 +123,11 @@ def build(results: list[TriageResult], classifier_label: str, input_path: str, f
             L.append("**Extracted.** " + "; ".join(parts) + "\n")
         if r.risk_flags:
             L.append(f"**Risk flags.** {', '.join(r.risk_flags)}\n")
-        if r.suggested_reply:
-            L.append(f"**Draft reply for the agent.** {r.suggested_reply}\n")
+        if r.reply_source == "template":
+            L.append(f"**Automated reply (code template, not model text).** {r.suggested_reply}\n")
+        elif r.suggested_reply:
+            warn = f" Check before sending: {', '.join(r.draft_warnings)}." if r.draft_warnings else ""
+            L.append(f"**Model draft for the agent, unverified.** {r.suggested_reply}{warn}\n")
         if r.open_questions:
             L.append("**Still to find out.** " + " ".join(r.open_questions) + "\n")
         L.append("**Trace.**\n")

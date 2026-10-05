@@ -21,6 +21,7 @@ to a person.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from .models import Analysis, Entities, InboundMessage, Intent, IntentItem, Routing
@@ -78,6 +79,32 @@ POLICY: dict[Intent, IntentPolicy] = {
 }
 
 PRIORITY_ORDER = ["P1", "P2", "P3", "P4"]
+
+# Automation never sends model-written text. It sends these code-owned templates; the
+# {placeholders} are filled by the system that executes the action (carrier API, brand KB).
+# Reason: in the live run the model drafted "Yes, we are open on Sundays" with no knowledge
+# of the salon's hours.
+AUTOMATION_TEMPLATES: dict[Intent, str] = {
+    Intent.ORDER_STATUS: "Here is the latest tracking update for order {order_id}: {carrier_status}. "
+                         "If it has not moved by {date}, we will step in.",
+    Intent.MARKETING_UNSUBSCRIBE: "You are now unsubscribed from our marketing messages. "
+                                  "Your orders and any subscription are not affected.",
+    Intent.POSITIVE_FEEDBACK: "Thank you so much for taking the time to tell us. We have shared it with the team.",
+    Intent.GENERAL_INFO: "{answer_from_brand_faq}",
+    Intent.PRICING_INQUIRY: "{answer_from_brand_price_list}",
+    Intent.PRODUCT_QUESTION: "{answer_from_brand_knowledge_base}",
+    Intent.BOOKING_NEW: "You can see live availability and book here: {booking_link}",
+}
+
+# Commitments an agent must verify before sending a model draft.
+DRAFT_COMMITMENTS = [
+    (r"\brefund(ed)?\b.*\b(initiated|processed|issued|approved)\b|\b(initiated|processed|issued|approved)\b.*\brefund", "promises a refund"),
+    (r"\b(will|have|has been)\b[^.]{0,40}\b(process|cancel|refund|reverse|send|arrange|forward)", "states an action as done or promised"),
+    (r"\bright away\b|\bimmediately\b|\bshortly\b|\bnow\b", "promises a timeline"),
+    (r"\bcalling you\b|\bwill call\b", "promises a phone call"),
+    (r"\b(we are|we're) open\b|\bper person\b|\bstarts? (at|around|from)\b", "states a business fact the model cannot know"),
+    (r"\[[^\]]+\]", "contains an unfilled placeholder"),
+]
 
 
 KNOWN_BRANDS = {"vitalis-wellness", "hair-studio", "voyage-travel"}
@@ -220,9 +247,17 @@ def decide(msg: InboundMessage, sig: Signals, analysis: Analysis, classifier: st
     if handler == "automation":
         reasons.append("all intents allow-listed, no risk flags, confidence above threshold")
 
-    suggested = analysis.suggested_reply
+    suggested, reply_source, draft_warnings = analysis.suggested_reply, "none", []
     if "prompt_injection" in flags:
         suggested = ""   # never draft a reply that could echo the attacker's script
+    if handler == "automation":
+        suggested = AUTOMATION_TEMPLATES.get(primary.intent, "")
+        reply_source = "template" if suggested else "none"
+    elif suggested:
+        reply_source = "model_draft_for_agent"
+        for pat, label in DRAFT_COMMITMENTS:
+            if re.search(pat, suggested, re.I) and label not in draft_warnings:
+                draft_warnings.append(label)
 
     return dict(
         intents=intents,
@@ -231,6 +266,8 @@ def decide(msg: InboundMessage, sig: Signals, analysis: Analysis, classifier: st
         confidence=confidence,
         confidence_notes=conf_notes,
         suggested_reply=suggested,
+        reply_source=reply_source,
+        draft_warnings=draft_warnings,
         routing=Routing(handler=handler, queue=queue, action=action, priority=priority,
                         response_sla=SLA[priority], secondary_queues=secondary,
                         reasons=human + reasons),

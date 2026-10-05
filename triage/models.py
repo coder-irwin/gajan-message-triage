@@ -138,6 +138,8 @@ class TriageResult(BaseModel):
     confidence_notes: list[str] = Field(default_factory=list)
     routing: Routing
     suggested_reply: str = ""
+    reply_source: Literal["template", "model_draft_for_agent", "none"] = "none"
+    draft_warnings: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     input_problems: list[str] = Field(default_factory=list)
     usage: Usage = Field(default_factory=Usage)

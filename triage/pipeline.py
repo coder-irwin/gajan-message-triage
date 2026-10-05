@@ -41,11 +41,18 @@ def load_dotenv(path: str | Path = ".env") -> None:
         os.environ.setdefault(k.strip().removeprefix("export ").strip(), v.strip().strip('"').strip("'"))
 
 
-def make_classifier(provider: str = "auto") -> Classifier | None:
+def make_classifier(provider: str = "auto", api_key: str | None = None,
+                    gcp_project: str | None = None) -> Classifier | None:
     """provider: auto | gemini | claude | rules.
-    auto picks Gemini if a Gemini key is set, else Claude if an Anthropic key is set, else rules."""
+    auto picks Gemini if a Gemini key or GCP project is available, else Claude if an
+    Anthropic key is set, else rules. api_key / gcp_project are bring-your-own credentials
+    supplied by the caller; they take precedence over the environment."""
     load_dotenv()
     provider = os.environ.get("TRIAGE_PROVIDER", provider) if provider == "auto" else provider
+    gcp_project = gcp_project or os.environ.get("TRIAGE_GCP_PROJECT")
+    if provider in ("auto", "gemini") and (api_key or gcp_project):
+        from .gemini import GeminiClassifier
+        return GeminiClassifier(api_key=api_key, gcp_project=None if api_key else gcp_project)
     has_gemini = any(os.environ.get(k) for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY"))
     has_claude = any(os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"))
     if provider == "rules":

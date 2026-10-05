@@ -20,6 +20,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--provider", choices=["auto", "gemini", "claude", "rules"], default="auto",
                     help="auto: Gemini if GEMINI_API_KEY is set, else Claude if ANTHROPIC_API_KEY is set, else offline rules")
     ap.add_argument("--report", default="output/OBSERVATION.md", help="where to write the readable observation report")
+    ap.add_argument("--ask-key", action="store_true",
+                    help="bring your own key: prompt for a Gemini API key with hidden input (never stored)")
+    ap.add_argument("--gcp-project", help="bring your own Google Cloud project: call Gemini through Vertex AI, "
+                                          "using `gcloud auth application-default login` credentials")
     ap.add_argument("--concurrency", type=int, default=4)
     args = ap.parse_args(argv)
 
@@ -29,7 +33,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"cannot read {args.input}: {exc}", file=sys.stderr)
         return 2
     msgs = normalise(raw)
-    clf = make_classifier(args.provider)
+    api_key = None
+    if args.ask_key:
+        import getpass
+        api_key = getpass.getpass("Gemini API key (input hidden, Enter to skip): ").strip() or None
+    clf = make_classifier(args.provider, api_key=api_key, gcp_project=args.gcp_project)
     if clf is None:
         print("No GEMINI_API_KEY or ANTHROPIC_API_KEY found (or --provider rules): running the offline keyword classifier. "
               "Everything will be routed to humans.\n", file=sys.stderr)
@@ -58,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     handlers = Counter(r.routing.handler for r in results)
     statuses = Counter(r.status for r in results)
     cost = sum(r.usage.cost_usd for r in results)
-    llm_calls = sum(1 for r in results if r.usage.input_tokens)
+    llm_calls = sum(1 for r in results if r.classifier.startswith("llm:"))
     print(f"\n{n} messages | automation {handlers['automation']} | human {handlers['human']} | "
           f"status {dict(statuses)}")
     if llm_calls:
