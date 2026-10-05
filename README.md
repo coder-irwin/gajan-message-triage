@@ -42,6 +42,8 @@ The app has no key of its own. You bring one, it is used for your request only, 
 | Google Cloud project | Type the project id. Run `gcloud auth application-default login` first. | You have Google Cloud with Vertex AI enabled |
 | No key | Choose "No key" | Trying it out. Offline keyword rules send every message to a human. |
 
+Treat keys like passwords. If you ever paste a key into a chat, a ticket or a commit, rotate it in AI Studio.
+
 Two safety rules apply. The server never falls back to a key in its own environment for a web request. On a shared deployment the Google Cloud project option is switched off, so visitors cannot bill the host's project.
 
 ## A real run, step by step
