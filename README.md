@@ -54,7 +54,7 @@ If a single call fails, is refused, or returns invalid output, that message alon
 
 ```
 file ──► ingest ──► signals ──► classifier ──► policy ──► result
-         repair     regex IDs,  Gemini, JSON    confidence,
+         repair     regex IDs,  Gemini call,    confidence,
          & flag     risk flags  JSON schema     routing,
          records    (can only   (or rules       human-review
                     add caution) fallback)      rule
