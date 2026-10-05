@@ -1,167 +1,192 @@
-# Message triage service
+# GAJAN Message Triage
 
-Reads inbound customer messages for the three GAJAN brands and decides, for each one:
-what the customer wants, what can be extracted, what should happen next, who owns it,
-how confident we are, and whether a human must see it before anything happens.
+A small service that reads each inbound customer message for Vitalis Wellness, Hair Studio and Voyage Travel. For each message it decides what the customer wants, what details can be pulled out, what should happen next, and who handles it. Every result carries a confidence score and a clear reason when a human must see it.
 
-Read `DECISION_LOG.md` first.
+**Read [DECISION_LOG.md](DECISION_LOG.md) first.**
 
-## Run it
+![Results of a live run on the 25 supplied messages](docs/screenshots/09-filter-automated.png)
 
-Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/). Without uv, run `pip install google-genai anthropic pydantic pytest fastapi uvicorn` and drop `uv run`.
+## What it does, in one minute
+
+- **The model labels, code decides.** Gemini reads each message and returns structured labels. Plain code then decides the queue, the priority and whether automation may act. The model has no tools, so no message can make it do anything.
+- **Automation is narrow and safe.** It only handles order-status lookups, FAQ and price answers, booking links, thank-yous and marketing opt-outs. Automated replies are fixed templates written in code, never model text.
+- **Risky messages always reach a person.** Refunds, cancellations, payments, health questions, emergencies and the injection attempt in the file all go to the right human queue, with a reason.
+- **Nothing in the file breaks it.** Null text, Hinglish, a message that is only a phone number, duplicate ids and bad JSON are all handled. One bad record never affects another.
+
+## Quick start: the web app
+
+You need Python 3.10 or newer and [uv](https://docs.astral.sh/uv/).
+
+```bash
+git clone https://github.com/coder-irwin/gajan-message-triage.git
+cd gajan-message-triage
+uv sync --extra api
+uv run uvicorn triage.api:app --port 8000
+```
+
+Open http://localhost:8000, then:
+
+1. Choose how to bring your own key.
+2. Click **Load the 25 sample messages**.
+3. Click **Run triage**.
+
+Click any row to see why it was routed that way.
+
+## Bring your own key
+
+The app has no key of its own. You bring one, it is used for your request only, and it is never stored, logged or shown back.
+
+| Option | How | When to use it |
+|---|---|---|
+| Gemini API key | Paste it into the web app, or use `--ask-key` on the command line | You have a key from [AI Studio](https://aistudio.google.com/apikey) |
+| Google Cloud project | Type the project id. Run `gcloud auth application-default login` first. | You have Google Cloud with Vertex AI enabled |
+| No key | Choose "No key" | Trying it out. Offline keyword rules send every message to a human. |
+
+Two safety rules apply. The server never falls back to a key in its own environment for a web request. On a shared deployment the Google Cloud project option is switched off, so visitors cannot bill the host's project.
+
+## A real run, step by step
+
+These screenshots come from a live run on 6 October 2026 using `gemini-3.5-flash-lite` through Vertex AI.
+
+**1. Bring your own key and load the messages.** The key field is masked, and the note explains where the key goes.
+
+![Choosing a credential and loading messages](docs/screenshots/02-key-and-messages.png)
+
+**2. Run.** All 25 messages took about 10 seconds. 6 were automated and 19 went to people. The run cost under 4 cents, which is $1.55 per 1,000 messages.
+
+![All 25 results](docs/screenshots/03-results.png)
+
+**3. The injection attempt is caught.** MSG-005 pretends to be a system notice and orders a refund. A regex flags it whatever the model says. It goes to trust and safety, no reply is drafted, and the trace shows every step.
+
+![MSG-005 routed to trust and safety](docs/screenshots/04-injection-blocked.png)
+
+**4. The emergency is P1.** A stranded traveller with an elderly passenger goes to the emergency desk with a 15-minute target. The model's draft promises a call, so the agent is warned to check it.
+
+![MSG-016 is P1](docs/screenshots/05-urgent-p1.png)
+
+**5. Automated replies are templates, not model text.** "Are you open on Sundays" is automated, but the reply is a slot for the brand FAQ. In an earlier run the model had written "Yes, we are open on Sundays" with no way of knowing the hours.
+
+![MSG-018 uses a code template](docs/screenshots/06-automated-template.png)
+
+**6. Risky drafts are flagged.** For the refund request, the model wrote "We have initiated your refund". The agent sees a warning before sending.
+
+![MSG-008 draft warnings](docs/screenshots/07-draft-warnings.png)
+
+**7. Health questions never get an automated answer.** The supplement and blood-pressure question goes to qualified staff.
+
+![MSG-019 health question](docs/screenshots/08-health-question.png)
+
+**8. A wrong key fails safely.** Every message goes to a human and the page says why. The key is not shown anywhere.
+
+![Wrong key](docs/screenshots/10-wrong-key-fails-safe.png)
+
+## Command line
 
 ```bash
 uv sync --extra dev --extra api
-uv run pytest -q                                   # 28 behaviour tests, no key needed
-uv run python -m triage data/messages.json --ask-key
+uv run python -m triage data/messages.json --ask-key            # hidden key prompt
+uv run python -m triage data/messages.json --gcp-project MY_ID  # or a Google Cloud project
+uv run python -m triage data/messages.json                      # no key: offline rules
 ```
-
-`--ask-key` prompts for your Gemini API key with hidden input. Press Enter without a key to run offline.
 
 Each run writes two files:
 
 | File | What it is |
 |---|---|
-| `output/OBSERVATION.md` | Readable report: run summary, measured cost, where every message went, and a step-by-step trace per message |
+| `output/OBSERVATION.md` | A readable report: summary, measured cost, where every message went, and a trace for each message |
 | `output/results.json` | The full machine-readable result for every message |
 
-`sample_output/` holds real runs on the supplied file: the default `gemini-3.5-flash-lite`, the cheaper `gemini-2.5-flash-lite` for comparison, and the offline rules mode.
-
-### Bring your own key
-
-The service has no key of its own. Supply one of these. A key is held in memory for the run and is never written to output or logs.
-
-| Option | How |
-|---|---|
-| Hidden prompt | `--ask-key` |
-| Environment or `.env` file | `cp .env.example .env`, then set `GEMINI_API_KEY`. `.env` is git-ignored. |
-| Google Cloud project instead of a key | `--gcp-project YOUR_PROJECT`, or `TRIAGE_GCP_PROJECT` in `.env`. This calls Gemini through Vertex AI and needs `gcloud auth application-default login` first. |
-| Per request on the HTTP service | Send the header `X-Gemini-Api-Key` |
-
-With no key at all, the offline rules classifier runs and every message goes to a human.
-
-HTTP service, using the same pipeline:
-
-```bash
-uv run uvicorn triage.api:app --port 8000
-curl -s localhost:8000/triage -H 'content-type: application/json' \
-  -H "X-Gemini-Api-Key: $GEMINI_API_KEY" \
-  -d '{"id":"t1","brand":"hair-studio","channel":"instagram","text":"are you open on sundays"}'
-```
-
-### Providers and models
-
-| Provider | Used when | Behaviour |
-|---|---|---|
-| Gemini (default) | A Gemini key or Google Cloud project is supplied | Full classification with `gemini-3.5-flash-lite`. Low-risk messages can be automated. |
-| Claude | `ANTHROPIC_API_KEY` is set and no Gemini credentials | Same prompt, schema and policy, using `claude-opus-5-5` |
-| Offline rules | No credentials | Keyword classifier. Everything goes to a human, in roughly the right queue. |
-
-If a single call fails, is refused, or returns invalid output, that message alone falls back to rules and goes to a human. Rate-limit errors are retried with backoff first.
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Any Gemini text model. Priced ones are listed in `triage/gemini.py`. |
-| `TRIAGE_PROVIDER` | `auto` | Force `gemini`, `claude` or `rules`. Same as `--provider`. |
-| `TRIAGE_MODEL` | `claude-opus-5-5` | Claude model, when using Claude |
-
-The cheaper `gemini-2.5-flash-lite` is closed to new Gemini API keys, so it cannot be the default. It still works through Vertex AI.
+You can also put credentials in a git-ignored `.env` file. See `.env.example`. Real runs are saved in [sample_output/](sample_output/).
 
 ## How it works
 
 ```
-file ──► ingest ──► signals ──► classifier ──► policy ──► result
-         repair     regex IDs,  Gemini call,    confidence,
-         & flag     risk flags  JSON schema     routing,
-         records    (can only   (or rules       human-review
-                    add caution) fallback)      rule
+messages ─► ingest ─► signals ─► classifier ─► policy ─► decision
+            repair    regex IDs  one Gemini    confidence, priority,
+            & flag    and risk   call, JSON    queue, human-review
+            records   flags      schema        rule, reply template
 ```
 
-1. **Ingest** (`triage/ingest.py`). Accepts an array, a wrapped array, or JSON Lines. Every record is repaired or flagged, never dropped: null text, non-string text, missing ids, duplicate ids, bad timestamps, unknown brands, control characters, oversized bodies.
-2. **Signals** (`triage/signals.py`). Deterministic regex for order ids, booking refs, phones, amounts, and risk flags: prompt injection, health topic, chargeback threat, repeat contact, urgency, vulnerable party, payment instructions from the sender, missing attachments. It also resolves relative dates against `received_at`.
-3. **Classifier** (`triage/gemini.py`, or `triage/llm.py` for Claude). One model call per message. There are no tools, so the model can only label, never act. Customer text is delimited and declared untrusted. Output is constrained by a JSON schema and validated again with pydantic.
-4. **Policy** (`triage/policy.py`). Plain code that reads only enums and booleans. It grounds every model-extracted identifier against the source text, computes confidence, assigns priority and an owning queue, and applies the human-review rule. Risk flags from step 2 can override the model. The model can never clear them.
+1. **Ingest.** Repairs or flags every record and never drops one.
+2. **Signals.** Regex finds order ids, booking refs, phone numbers and amounts. It raises risk flags for injection, health, chargeback threats, repeat contact, urgency, vulnerable people, payment instructions and missing attachments. It also resolves dates such as "tomorrow" against the received time. These flags can only add caution.
+3. **Classifier.** One Gemini call per message. The customer text is marked as untrusted. The answer must match a JSON schema and is validated again. If the call fails, that message falls back to keyword rules and goes to a person.
+4. **Policy.** Plain code. Any order id the model returns that is not in the text is dropped. It then sets confidence and priority, picks one owning queue with linked tickets for other requests, and applies the human-review rule.
 
-### Output shape (per message)
+## When a human sees the message
 
-`intents` is a list because one message can carry several requests. `routing` names one owning queue so one person is accountable. The other requests become linked tickets in `secondary_queues`.
-
-```json
-{
-  "message_id": "MSG-008", "status": "ok", "classifier": "llm:gemini-3.5-flash-lite",
-  "language": "en", "summary": "...",
-  "intents": [{"intent": "refund_request", "detail": "...", "confidence": "high"},
-              {"intent": "purchase_request", "detail": "...", "confidence": "high"}],
-  "entities": {"order_ids": ["VW-48190"], "dates": [{"text": "22nd", "resolved": "2026-09-22"}], "...": []},
-  "risk_flags": [], "confidence": 0.92, "confidence_notes": [],
-  "routing": {"handler": "human", "queue": "vitalis-wellness:billing",
-              "secondary_queues": ["vitalis-wellness:sales"], "priority": "P2",
-              "response_sla": "4 hours", "action": "...", "reasons": ["H3 not on automation allow-list: ..."]},
-  "suggested_reply": "draft for the agent", "reply_source": "model_draft_for_agent",
-  "draft_warnings": ["promises a refund"], "open_questions": ["..."], "usage": {"cost_usd": 0.0016}
-}
-```
-
-## Confidence and the human-review rule
-
-Confidence is the lowest per-intent rating from the model, mapped high 0.92, medium 0.70, low 0.40. Deterministic checks then cap it: keyword fallback 0.50, three words or fewer 0.60, truncated text 0.50. An invented identifier costs 0.15.
-
-A message goes to a human if any of these hold. Otherwise automation acts.
+A message goes to a person if any rule below applies. Otherwise automation acts.
 
 | Rule | Trigger |
 |---|---|
-| H1 | Keyword fallback, or the model call failed |
-| H2 | Hard-stop flag: prompt injection, health topic, chargeback or legal threat, payment instructions from the sender, empty message, invented identifier |
-| H3 | Any intent outside the automation allow-list |
+| H1 | The model call failed, or no key was given |
+| H2 | A hard-stop flag: injection, health, chargeback or legal threat, payment instructions, empty message, invented identifier |
+| H3 | Any request outside the automation allow-list |
 | H4 | Confidence below 0.80 |
-| H5 | Needs an earlier conversation we cannot see |
+| H5 | It depends on an earlier conversation we cannot see |
 | H6 | The model returned an identifier that is not in the text |
 | H7 | The automated action needs an identifier the message lacks |
-| H8 | Damaged input record: unknown brand, truncated |
+| H8 | The record itself is damaged, such as an unknown brand or truncated text |
 
-The automation allow-list is deliberately narrow and covers only reversible, low-risk actions. These are an order-status lookup, an answer from the brand FAQ or price list, a booking link, a thank-you, and a marketing opt-out. Refunds, cancellations, booking changes, payments and health questions always go to a person. Automation never sends model-written text. It sends a fixed template owned by code, with slots filled from the carrier API or the brand knowledge base. In the live run the model drafted "Yes, we are open on Sundays" with no knowledge of the salon's hours. Model drafts only ever go to agents, and drafts that promise refunds, timelines or calls are flagged for checking.
-
-In the live run, 5 of 25 messages were automated: the tracking question with an order id, the two thank-yous, the bare unsubscribe, and the opening-hours question. The balayage price question went to a person because the model was only medium-confident it was also a booking request. Everything else needs a person by design.
+Confidence is the model's lowest rating across the message's requests: high 0.92, medium 0.70, low 0.40. Code then lowers it for very short messages, the offline fallback, truncated text and invented identifiers. In practice the model rates almost everything "high", so H2 and H3 do most of the work. The decision log covers this.
 
 ## Cost per 1,000 messages
 
-These are measured, not estimated. They come from the API's own token counts on the supplied 25 messages. The empty message skips the model, so there were 24 calls.
+Measured from the API's own token counts. The default model ran four times on the 25 messages and the cheaper one twice. Results agreed to within a cent per 1,000.
 
-| Model | Avg input tokens | Avg output tokens | Per 1,000 messages | Per day at 10k |
+| Model | Avg input tokens | Avg output tokens | Per 1,000 messages | Per day at 10,000 |
 |---|---|---|---|---|
 | `gemini-3.5-flash-lite` (default) | 2,079 | 373 | $1.55 | $15.50 |
 | `gemini-2.5-flash-lite`, Vertex AI only | about 1,000 | about 390 | $0.25 | $2.50 |
 
-**How the default's number is built**, at $0.30 input and $2.50 output per million tokens:
+How the default's number is built, at $0.30 input and $2.50 output per million tokens:
 
 ```
-2,079 × $0.30/M + 373 × $2.50/M
-= $0.00062 + $0.00093 = $0.00155 per message
+2,079 × $0.30/M + 373 × $2.50/M = $0.00062 + $0.00093 = $0.00155 per message
 ```
 
-**Assumptions.**
-- Real messages are about as long as these. Input is mostly the fixed system prompt and schema, at about 1,950 tokens, so longer messages barely move the cost.
-- Output is 60 percent of the cost. Shorter output, such as dropping the agent draft, is the main lever after model choice.
-- Thinking is set to minimal. Classification does not need reasoning.
-- Prices are from ai.google.dev/gemini-api/docs/pricing, checked 6 October 2026.
+**Assumptions:**
+- Real messages are about as long as these. Most input is the fixed prompt and schema, at about 1,950 tokens, so longer messages barely change the cost.
+- Thinking is set to minimal, because classification does not need reasoning.
+- Prices are from the [Gemini pricing page](https://ai.google.dev/gemini-api/docs/pricing), checked 6 October 2026.
+- The cheaper 2.5 Flash-Lite is closed to new Gemini API keys, so it cannot be the default.
 
-**Throughput.** 10,000 a day averages about 7 messages a minute. Median latency was 2.4 seconds per message, with 4 in flight at once. One worker therefore handles about 100 a minute. Free-tier keys have low per-minute and per-day limits, so production needs a paid key. Rate-limit errors are retried with backoff.
+**Scale.** 10,000 messages a day averages about 7 a minute. With 8 calls in flight, the 25 messages took about 10 seconds, so one small server has a lot of headroom. Free-tier keys have low limits, so production needs a paid key. Rate-limit errors are retried with backoff.
 
-**Why the cheapest model is acceptable.** The model only labels messages. Refunds, health questions, injection attempts, payments, emergencies and every outgoing automated reply are controlled by code. A weaker model can misfile a message, but it cannot send an invented answer or approve anything.
+## Run in Docker or on Cloud Run
 
-The Batch API halves the price but is not real time. Batch is suitable only for backfills.
+```bash
+docker build -t gajan-triage .
+docker run -p 8080:8080 gajan-triage        # open http://localhost:8080
+```
 
-## Layout
+The image contains no credentials. Visitors bring their own key. The Google Cloud project option is off by default in the container. The same image can be deployed to Cloud Run.
+
+## Tests
+
+```bash
+uv run pytest -q     # 30 tests, no key needed
+```
+
+The tests cover broken files, hostile records and a model that obeys the injection attack. They also cover a model that invents order ids, API failures and rate limits, automated replies never using model text, and a server-side key never being used for a caller who brought none.
+
+## Project layout
 
 ```
-triage/ingest.py    file loading and record repair
-triage/signals.py   regex extraction, risk flags, date resolution
-triage/gemini.py    Gemini call, retries, pricing (default)
-triage/llm.py       shared prompt and JSON schema; Claude call
-triage/report.py    observation report
-triage/rules.py     offline keyword fallback
-triage/policy.py    confidence, priority, routing, human-review rule
-triage/pipeline.py  orchestration and per-message isolation
-triage/api.py       FastAPI wrapper
-tests/              behaviour tests and adversarial fixtures
+triage/ingest.py     loads the file and repairs records
+triage/signals.py    regex extraction, risk flags, date resolution
+triage/gemini.py     Gemini call, retries, pricing (default provider)
+triage/llm.py        shared prompt and JSON schema, Claude option
+triage/rules.py      offline keyword fallback
+triage/policy.py     confidence, priority, routing, human-review rule, reply templates
+triage/pipeline.py   runs each message through the stages, keeps the trace
+triage/report.py     writes the observation report
+triage/api.py        web app and HTTP API with bring-your-own-key
+triage/web/          the single-page web interface
+tests/               behaviour tests and adversarial input files
+sample_output/       saved live runs and their reports
+docs/screenshots/    the screenshots above
 ```
+
+## AI tools used
+
+See the last section of [DECISION_LOG.md](DECISION_LOG.md) and the full account in [AI_USAGE.md](AI_USAGE.md).

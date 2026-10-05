@@ -8,7 +8,7 @@
 - **Not everything is customer service.** MSG-021 is an invoice with "bank details in the PDF", a payment-fraud pattern. MSG-024 is a CV and MSG-013 a wholesale lead. These go to finance, recruiting and B2B.
 - **One message is an attack.** MSG-005 orders a refund and no escalation. A regex flags it whatever the model says, and it goes to trust and safety with no reply. A test where the model obeys the attack shows policy still overrules it.
 - **Some messages are meaningless alone.** MSG-007, MSG-012 and MSG-020 depend on earlier conversations, and the file has no sender or thread id. They go to a human.
-- **Urgency is not uniform.** MSG-016 is a stranded traveller with an elderly passenger, emailed at 04:22 Toronto time. It is P1: page someone.
+- **Urgency is not uniform.** MSG-016 is a stranded traveller with an elderly passenger, emailed at 04:22 Toronto time. It is P1.
 - **Similar words, different risk.** A bare "Unsubscribe" is automated. "Cancel my subscription" touches billing and goes to a human. Automation never answers health questions such as MSG-019.
 - **Messy input.** Null text skips the model. Hinglish is handled. Relative dates resolve against `received_at`.
 
@@ -23,15 +23,13 @@
 
 ## Where this breaks
 
-Evidence from live runs of `gemini-3.5-flash-lite` on the 25 messages.
+Evidence from four live runs of `gemini-3.5-flash-lite` on the 25 messages.
 
-- **Model confidence is nearly useless.** It rated 30 of 31 intents "high". The human-review rule works because of the allow-list and hard-stop flags, not the score.
-- **The model invents facts in drafts.** It wrote "Yes, we are open on Sundays" and "I have initiated the refund". Automated replies are now code templates only. Agent drafts are flagged, but a careless agent could still send one.
-- **Some misroutes.** A customer accepting a quote (MSG-020) went to bookings, not sales. "Booked for tomorrow but something came up" (MSG-022) became a P3 change, when it is a cancellation that frees a slot tomorrow. A cheaper model got that one right.
-- **Runs are not identical.** Secondary intents changed between two runs. Owner, priority and handler did not.
-- **Regex flags are English-only.** Hindi or Punjabi injections or health questions rely on the model alone.
-- **Outages flood the human queue.** That is safe, but needs staffing.
-- **No deduplication or business-hours awareness.**
+- **Model confidence is nearly useless.** It rated 30 of 31 intents "high". Safety comes from the allow-list and hard-stop flags, not the score.
+- **The model invents facts in drafts,** such as "Yes, we are open on Sundays". Automated replies are now code templates. Agent drafts are flagged, but a careless agent could still send one.
+- **Routing is not fully stable between runs.** "Booked for tomorrow but something came up" (MSG-022) was read as a P2 cancellation in one run of four, and a P3 change in the others. The quote acceptance (MSG-020) reached sales once in four. Risky messages routed identically every time.
+- **Regex flags are English-only.** Hindi or Punjabi injections rely on the model alone.
+- **Outages flood the human queue.** That is safe, but needs staffing. There is no deduplication or business-hours logic.
 
 ## With another day
 
@@ -43,5 +41,7 @@ Evidence from live runs of `gemini-3.5-flash-lite` on the 25 messages.
 
 ## AI tools used
 
-- **Claude Code** (Anthropic's coding agent, running Claude Opus 5.5) wrote the code, the tests and the adversarial fixtures. It also drafted the README and this log from my instructions.
-- **[Akaash: before sending, describe what you reviewed or changed yourself, and list any other tools you used, such as the assistant you used to plan the task.]**
+- **Claude Code** (Anthropic's coding agent, on Claude Opus 5.5) wrote the code, tests, web app and first drafts of these documents. It also ran the live tests and reviewed every result. That review caught the invented replies, a cost-counting bug and broken warning patterns, all fixed.
+- **Gemini** is the classifier inside the product only.
+- **I** chose Gemini and the cheapest workable model, the pipeline-not-agent design and bring-your-own-key. I also asked for a manual check of every result.
+- The full list of what was reviewed, fixed and not verified is in [AI_USAGE.md](AI_USAGE.md).

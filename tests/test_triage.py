@@ -300,3 +300,28 @@ def test_agent_draft_with_promises_is_flagged():
     r = by_id(run(ROOT / "data/messages.json", StubClassifier({"MSG-008": a})))["MSG-008"]
     assert r.reply_source == "model_draft_for_agent"
     assert "promises a refund" in r.draft_warnings
+
+
+# ---- web app and bring-your-own-key ---------------------------------------------
+
+def test_web_run_offline_and_server_env_key_is_never_used(monkeypatch):
+    # BYOK: a key sitting in the server's environment must not be spent on a caller
+    # who did not bring one.
+    monkeypatch.setenv("GEMINI_API_KEY", "server-side-key-should-not-be-used")
+    from fastapi.testclient import TestClient
+    from triage.api import app
+    c = TestClient(app)
+    assert c.get("/").status_code == 200
+    sample = c.get("/sample").json()
+    body = c.post("/run", json=sample).json()
+    assert body["summary"]["classifier"].startswith("rules")
+    assert body["summary"]["messages"] == 25 and body["summary"]["human"] == 25
+    assert "Observation report" in body["report_markdown"]
+
+
+def test_web_rejects_malformed_project_id_and_oversized_batches():
+    from fastapi.testclient import TestClient
+    from triage.api import app
+    c = TestClient(app)
+    assert c.post("/run", json=[{"text": "hi"}], headers={"X-GCP-Project": "x; rm -rf /"}).status_code == 400
+    assert c.post("/run", json=[{"text": "hi"}] * 501).status_code == 413

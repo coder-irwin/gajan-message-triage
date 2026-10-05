@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GAJAN Message Triage</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --ink: #1d2433; --muted: #5d6779; --line: #e3e6eb;
+    --accent: #2f5bd3; --auto: #1f8a5b; --auto-bg: #e5f5ed; --human: #8a5a12; --human-bg: #fdf1dc;
+    --p1: #b42318; --p1-bg: #fde8e7; --p2: #b54708; --p2-bg: #fef0e2; --p3: #364152; --p3-bg: #eef0f3;
+    --warn-bg: #fff6e0; --err-bg: #fde8e7;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); }
+  header { background: var(--ink); color: #fff; padding: 18px 32px; }
+  header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  header p { margin: 4px 0 0; color: #c5cbd6; font-size: 13px; }
+  main { max-width: 1280px; margin: 0 auto; padding: 24px 32px 64px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+  .card h2 { margin: 0 0 4px; font-size: 15px; }
+  .step { color: var(--accent); font-weight: 700; margin-right: 6px; }
+  .hint { color: var(--muted); font-size: 12.5px; margin: 2px 0 12px; }
+  .modes { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .modes label { border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; cursor: pointer; font-size: 13px; }
+  .modes input { margin-right: 6px; }
+  .modes label:has(input:checked) { border-color: var(--accent); background: #eef2fd; }
+  input[type=text], input[type=password], select, textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; font: inherit; }
+  textarea { height: 150px; font: 12px/1.45 ui-monospace, Menlo, monospace; resize: vertical; }
+  .row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+  .row > * { flex: 1; }
+  .lock { background: #eef7f1; border: 1px solid #cfe9da; color: #19603f; border-radius: 7px; padding: 8px 10px; font-size: 12.5px; margin-top: 12px; }
+  button { font: inherit; border-radius: 7px; border: 1px solid var(--line); background: #fff; padding: 8px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 10px 22px; }
+  button:disabled { opacity: .55; cursor: wait; }
+  .runbar { display: flex; align-items: center; gap: 14px; margin: 20px 0; }
+  #status { color: var(--muted); }
+  .banner { border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
+  .banner.err { background: var(--err-bg); color: var(--p1); }
+  .banner.warn { background: var(--warn-bg); color: #7a5300; }
+  .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 18px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .stat .v { font-size: 24px; font-weight: 700; }
+  .stat .l { color: var(--muted); font-size: 12px; }
+  .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+  .chip { border-radius: 999px; padding: 5px 12px; font-size: 12.5px; }
+  .chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .spacer { flex: 1; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 13px; }
+  th { background: #f0f2f5; font-size: 12px; color: var(--muted); font-weight: 600; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #f7f9fd; }
+  .msg { color: #2c3445; max-width: 380px; }
+  .badge { display: inline-block; border-radius: 6px; padding: 1px 7px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+  .automation { background: var(--auto-bg); color: var(--auto); }
+  .human { background: var(--human-bg); color: var(--human); }
+  .P1 { background: var(--p1-bg); color: var(--p1); } .P2 { background: var(--p2-bg); color: var(--p2); }
+  .P3, .P4 { background: var(--p3-bg); color: var(--p3); }
+  .intent { display: inline-block; background: #eef0f3; border-radius: 5px; padding: 0 6px; margin: 1px 3px 1px 0; font-size: 11.5px; }
+  .flag { display: inline-block; background: var(--err-bg); color: var(--p1); border-radius: 5px; padding: 0 6px; margin: 1px 3px 1px 0; font-size: 11.5px; }
+  .q { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  #drawer { position: fixed; top: 0; right: 0; width: 560px; max-width: 100%; height: 100%; background: #fff; border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0,0,0,.08); overflow-y: auto; padding: 22px 24px 40px; display: none; }
+  #drawer.open { display: block; }
+  #drawer h3 { margin: 0 0 6px; }
+  #drawer blockquote { margin: 10px 0; padding: 10px 12px; background: #f6f7f9; border-left: 3px solid var(--accent); border-radius: 4px; }
+  .kv { margin: 12px 0; }
+  .kv b { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: .03em; }
+  .trace li { margin-bottom: 6px; font-size: 12.5px; }
+  .trace code { background: #eef0f3; padding: 0 5px; border-radius: 4px; font-weight: 600; }
+  .reply { padding: 10px 12px; border-radius: 6px; background: #f6f7f9; }
+  .reply.tmpl { background: var(--auto-bg); }
+  .close { float: right; }
+  .hidden { display: none; }
+  @media (max-width: 1000px) { .grid2 { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(3, 1fr); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>GAJAN Message Triage</h1>
+  <p>Reads each customer message, works out what the customer wants, and routes it to automation or the right human queue.</p>
+</header>
+<main>
+  <div class="grid2">
+    <section class="card">
+      <h2><span class="step">1</span>Bring your own key</h2>
+      <p class="hint">This app holds no key of its own. Pick how to call Gemini.</p>
+      <div class="modes">
+        <label><input type="radio" name="mode" value="key" checked>Gemini API key</label>
+        <label><input type="radio" name="mode" value="project">Google Cloud project</label>
+        <label><input type="radio" name="mode" value="offline">No key (offline rules)</label>
+      </div>
+      <div id="keyBox"><input id="apiKey" type="password" placeholder="Paste your Gemini API key from AI Studio" autocomplete="off"></div>
+      <div id="projectBox" class="hidden"><input id="project" type="text" placeholder="Google Cloud project id, e.g. my-project-123" autocomplete="off">
+        <p class="hint" style="margin-top:6px">Uses Vertex AI with this machine's <code>gcloud auth application-default login</code>.</p></div>
+      <div id="offlineBox" class="hidden"><p class="hint">Keyword rules only. Every message goes to a human, in roughly the right queue.</p></div>
+      <div class="row"><label style="flex:0 0 auto">Model</label>
+        <select id="model">
+          <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (default)</option>
+          <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (cheapest, Vertex only for new users)</option>
+          <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+          <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+        </select></div>
+      <div class="lock">🔒 Your key stays in this browser tab's memory and is sent only with the run request. The server never stores or logs it.</div>
+    </section>
+    <section class="card">
+      <h2><span class="step">2</span>Messages</h2>
+      <p class="hint">A JSON array of messages. Start with the 25 supplied ones, or upload your own file.</p>
+      <textarea id="input" spellcheck="false"></textarea>
+      <div class="row">
+        <button id="loadSample">Load the 25 sample messages</button>
+        <button id="uploadBtn">Upload a JSON file</button>
+        <input id="file" type="file" accept=".json,.jsonl,application/json" class="hidden">
+      </div>
+    </section>
+  </div>
+
+  <div class="runbar">
+    <button id="run" class="primary">Run triage</button>
+    <span id="status"></span>
+  </div>
+
+  <section id="results" class="hidden">
+    <div id="banner"></div>
+    <div class="stats" id="stats"></div>
+    <div class="toolbar">
+      <button class="chip on" data-f="all">All</button>
+      <button class="chip" data-f="automation">Automated</button>
+      <button class="chip" data-f="human">To a human</button>
+      <button class="chip" data-f="urgent">P1 and P2</button>
+      <button class="chip" data-f="flags">Has risk flags</button>
+      <span class="spacer"></span>
+      <button id="dlJson">Download results.json</button>
+      <button id="dlReport">Download OBSERVATION.md</button>
+    </div>
+    <table>
+      <thead><tr><th>ID</th><th>Brand</th><th>Message</th><th>Intents</th><th>Conf.</th><th>Priority</th><th>Handler</th><th>Queue</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+</main>
+
+<aside id="drawer"></aside>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let last = null, filter = "all";
+// Hide the Google Cloud project option when the server has it switched off (shared deployments).
+fetch('/health').then(r => r.json()).then(h => {
+  if (!h.gcp_project_mode) document.querySelector('input[value=project]').closest('label').style.display = 'none';
+});
+
+document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', () => {
+  const m = document.querySelector('input[name=mode]:checked').value;
+  $('keyBox').classList.toggle('hidden', m !== 'key');
+  $('projectBox').classList.toggle('hidden', m !== 'project');
+  $('offlineBox').classList.toggle('hidden', m !== 'offline');
+}));
+
+$('loadSample').onclick = async () => {
+  const r = await fetch('/sample');
+  $('input').value = JSON.stringify(await r.json(), null, 1);
+};
+$('uploadBtn').onclick = () => $('file').click();
+$('file').onchange = async (e) => { const f = e.target.files[0]; if (f) $('input').value = await f.text(); };
+
+$('run').onclick = async () => {
+  let payload;
+  const raw = $('input').value.trim();
+  if (!raw) { $('status').textContent = 'Load or paste some messages first.'; return; }
+  try { payload = JSON.parse(raw); }
+  catch {
+    // Accept JSON Lines too; unparseable lines are passed through as text so they still get a result.
+    payload = raw.split('\n').filter(l => l.trim()).map(l => { try { return JSON.parse(l); } catch { return l; } });
+  }
+  const headers = {'content-type': 'application/json', 'x-gemini-model': $('model').value};
+  const m = document.querySelector('input[name=mode]:checked').value;
+  if (m === 'key') {
+    if (!$('apiKey').value.trim()) { $('status').textContent = 'Paste a Gemini API key, or pick another option.'; return; }
+    headers['x-gemini-api-key'] = $('apiKey').value.trim();
+  }
+  if (m === 'project') {
+    if (!$('project').value.trim()) { $('status').textContent = 'Enter a Google Cloud project id.'; return; }
+    headers['x-gcp-project'] = $('project').value.trim();
+  }
+  $('run').disabled = true;
+  const t0 = Date.now();
+  const tick = setInterval(() => $('status').textContent = `Running ${Array.isArray(payload) ? payload.length : 1} messages… ${((Date.now()-t0)/1000).toFixed(0)}s`, 250);
+  try {
+    const r = await fetch('/run', {method: 'POST', headers, body: JSON.stringify(payload)});
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.detail || r.statusText);
+    last = body;
+    $('status').textContent = `Done in ${((Date.now()-t0)/1000).toFixed(1)}s with ${esc(body.summary.classifier)}.`;
+    render();
+  } catch (e) {
+    $('status').textContent = 'Error: ' + e.message;
+  } finally { clearInterval(tick); $('run').disabled = false; }
+};
+
+document.querySelectorAll('.chip').forEach(c => c.onclick = () => {
+  document.querySelectorAll('.chip').forEach(x => x.classList.remove('on'));
+  c.classList.add('on'); filter = c.dataset.f; renderRows();
+});
+
+function render() {
+  const s = last.summary;
+  $('results').classList.remove('hidden');
+  let banner = '';
+  if (s.model_calls === 0 && s.failed_calls > 0) banner = `<div class="banner err"><b>Every model call failed, so every message went to a human.</b> ${esc(s.first_error)}</div>`;
+  else if (s.failed_calls > 0) banner = `<div class="banner warn">${s.failed_calls} model call(s) failed and fell back to a human. ${esc(s.first_error)}</div>`;
+  else if (s.model_calls === 0) banner = `<div class="banner warn">Offline mode: no key was supplied, so every message goes to a human.</div>`;
+  $('banner').innerHTML = banner;
+  const p = s.priority || {};
+  const stat = (v, l) => `<div class="stat"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+  $('stats').innerHTML = stat(s.messages, 'Messages') + stat(s.automation, 'Automated') + stat(s.human, 'Sent to a human')
+    + stat(p.P1 || 0, 'P1, respond in 15 min') + stat('$' + s.cost_per_1000.toFixed(2), 'Cost per 1,000 messages')
+    + stat('$' + s.cost_usd.toFixed(4), 'Cost of this run');
+  renderRows();
+}
+
+function keep(r) {
+  if (filter === 'automation' || filter === 'human') return r.routing.handler === filter;
+  if (filter === 'urgent') return ['P1','P2'].includes(r.routing.priority);
+  if (filter === 'flags') return r.risk_flags.some(f => !['contains_pii','very_short_message'].includes(f));
+  return true;
+}
+
+function renderRows() {
+  $('rows').innerHTML = last.results.filter(keep).map(r => `
+    <tr data-id="${esc(r.message_id)}">
+      <td><b>${esc(r.message_id)}</b><br><span style="color:var(--muted);font-size:11.5px">${esc(r.channel)}</span></td>
+      <td>${esc(r.brand)}</td>
+      <td class="msg">${esc(r.text) || '<i style="color:var(--muted)">(empty message)</i>'}</td>
+      <td>${r.intents.map(i => `<span class="intent">${esc(i.intent)}</span>`).join('') || '—'}</td>
+      <td>${r.confidence.toFixed(2)}</td>
+      <td><span class="badge ${esc(r.routing.priority)}">${esc(r.routing.priority)}</span></td>
+      <td><span class="badge ${esc(r.routing.handler)}">${r.routing.handler === 'automation' ? 'Automated' : 'Human'}</span></td>
+      <td class="q">${esc(r.routing.queue)}</td>
+    </tr>`).join('');
+  document.querySelectorAll('#rows tr').forEach(tr => tr.onclick = () => openDrawer(tr.dataset.id));
+}
+
+function openDrawer(id) {
+  const r = last.results.find(x => x.message_id === id);
+  const ents = Object.entries(r.entities).filter(([k, v]) => v && v.length)
+    .map(([k, v]) => `<div>${esc(k)}: ${esc(k === 'dates' ? v.map(d => `${d.text} = ${d.resolved || '?'}`).join(', ') : v.join(', '))}</div>`).join('');
+  let reply = '';
+  if (r.reply_source === 'template') reply = `<div class="kv"><b>Automated reply (code template, not model text)</b><div class="reply tmpl">${esc(r.suggested_reply)}</div></div>`;
+  else if (r.suggested_reply) reply = `<div class="kv"><b>Model draft for the agent, unverified</b><div class="reply">${esc(r.suggested_reply)}</div>${r.draft_warnings.length ? `<div class="banner warn" style="margin-top:8px">Check before sending: ${esc(r.draft_warnings.join(', '))}</div>` : ''}</div>`;
+  $('drawer').innerHTML = `
+    <button class="close" onclick="document.getElementById('drawer').classList.remove('open')">Close</button>
+    <h3>${esc(r.message_id)} · ${esc(r.brand)} · ${esc(r.channel)}</h3>
+    <blockquote>${esc(r.text) || '<i>(empty message)</i>'}</blockquote>
+    ${r.summary ? `<div class="kv"><b>Summary</b>${esc(r.summary)}</div>` : ''}
+    <div class="kv"><b>Decision</b><span class="badge ${esc(r.routing.handler)}">${r.routing.handler === 'automation' ? 'Automated' : 'Human'}</span>
+      <span class="badge ${esc(r.routing.priority)}">${esc(r.routing.priority)}</span> to <span class="q">${esc(r.routing.queue)}</span>,
+      respond within ${esc(r.routing.response_sla)}. Confidence ${r.confidence.toFixed(2)}.</div>
+    <div class="kv"><b>Action triggered</b>${esc(r.routing.action)}</div>
+    ${r.routing.secondary_queues.length ? `<div class="kv"><b>Linked tickets</b><span class="q">${esc(r.routing.secondary_queues.join(', '))}</span></div>` : ''}
+    <div class="kv"><b>Why</b>${r.routing.reasons.map(x => `<div>• ${esc(x)}</div>`).join('')}</div>
+    ${r.risk_flags.length ? `<div class="kv"><b>Risk flags</b>${r.risk_flags.map(f => `<span class="flag">${esc(f)}</span>`).join('')}</div>` : ''}
+    ${ents ? `<div class="kv"><b>Extracted</b>${ents}</div>` : ''}
+    ${reply}
+    ${r.open_questions.length ? `<div class="kv"><b>Still to find out</b>${r.open_questions.map(x => `<div>• ${esc(x)}</div>`).join('')}</div>` : ''}
+    <div class="kv"><b>Trace, stage by stage</b><ul class="trace">${r.trace.map(t => `<li><code>${esc(t.stage)}</code> ${esc(t.detail)}</li>`).join('')}</ul></div>`;
+  $('drawer').classList.add('open');
+  $('drawer').scrollTop = 0;
+}
+
+function download(name, text, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], {type}));
+  a.download = name; a.click();
+}
+$('dlJson').onclick = () => download('results.json', JSON.stringify(last.results, null, 2), 'application/json');
+$('dlReport').onclick = () => download('OBSERVATION.md', last.report_markdown, 'text/markdown');
+</script>
+</body>
+</html>

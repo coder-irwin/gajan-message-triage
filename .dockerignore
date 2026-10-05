@@ -1,0 +1,9 @@
+.venv
+.env
+output
+__pycache__
+.pytest_cache
+.git
+docs
+sample_output
+candidate_pack
