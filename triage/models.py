@@ -117,6 +117,11 @@ class Routing(BaseModel):
     reasons: list[str] = Field(default_factory=list)
 
 
+class TraceStep(BaseModel):
+    stage: str      # ingest | signals | classifier | policy | decision
+    detail: str
+
+
 class TriageResult(BaseModel):
     message_id: str
     brand: str
@@ -137,3 +142,5 @@ class TriageResult(BaseModel):
     input_problems: list[str] = Field(default_factory=list)
     usage: Usage = Field(default_factory=Usage)
     latency_ms: int = 0
+    text: str = ""
+    trace: list[TraceStep] = Field(default_factory=list)

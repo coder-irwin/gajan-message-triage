@@ -28,11 +28,11 @@
 - **Outages flood the human queue.** If the API fails, every message goes to humans. That is safe, but a peak-hour outage needs staffing.
 - **No deduplication.** MSG-011 says this is their third message, and each copy becomes its own ticket.
 - **No business-hours awareness.** Priority ignores the customer's time zone and when staff are on shift.
-- **The cost figure is estimated.** I had no API key when building this. The CLI prints measured cost when run with one.
+- **The cheapest model will misread more often.** Code catches the dangerous cases, but misfiled routine messages still cost agent time.
 
 ## With another day
 
-1. **Label data and calibrate.** Label these 25 plus a few hundred real messages, measure precision per intent, and set a threshold per intent. Compare Opus, Sonnet and Haiku on accuracy against cost.
+1. **Label data and calibrate.** Label these 25 plus a few hundred real messages, measure precision per intent, and set a threshold per intent. Compare Gemini Flash-Lite with a larger model on accuracy against cost.
 2. **Shadow mode.** Run for a week where automation proposes and humans act, then compare.
 3. **Thread linking and deduplication** by sender id.
 4. **Brand knowledge bases** so FAQ answers can actually send.

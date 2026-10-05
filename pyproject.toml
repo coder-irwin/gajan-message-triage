@@ -5,6 +5,7 @@ description = "Inbound customer message triage for GAJAN Group brands"
 requires-python = ">=3.10"
 dependencies = [
     "anthropic>=1.11",
+    "google-genai>=2.28.0",
     "pydantic>=2.7",
 ]
 

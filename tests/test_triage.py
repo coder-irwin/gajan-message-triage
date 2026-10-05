@@ -218,3 +218,65 @@ def test_bare_unsubscribe_is_automated_but_paid_cancellation_is_not():
     r = by_id(run(ROOT / "data/messages.json", StubClassifier({"MSG-017": unsub, "MSG-002": cancel})))
     assert r["MSG-017"].routing.handler == "automation"
     assert r["MSG-002"].routing.handler == "human"
+
+
+# ---- the Gemini client wrapper, with a fake SDK client --------------------------
+
+class FakeGemini:
+    def __init__(self, response=None, exc_seq=()):
+        self.calls, self.exc_seq, self.response = [], list(exc_seq), response
+
+        async def generate_content(**kw):
+            self.calls.append(kw)
+            if self.exc_seq:
+                raise self.exc_seq.pop(0)
+            return self.response
+
+        self.aio = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+
+
+def gemini_response(text, finish="FinishReason.STOP"):
+    return SimpleNamespace(
+        text=text, candidates=[SimpleNamespace(finish_reason=finish)], prompt_feedback=None,
+        usage_metadata=SimpleNamespace(prompt_token_count=2400, cached_content_token_count=2000,
+                                       candidates_token_count=300, thoughts_token_count=0),
+    )
+
+
+def test_gemini_wrapper_parses_and_prices():
+    from triage.gemini import GeminiClassifier
+    fake = FakeGemini(gemini_response(json.dumps(analysis())))
+    a, usage = asyncio.run(GeminiClassifier(client=fake, model="gemini-2.5-flash-lite").classify(_msg()))
+    assert a.intents[0].intent.value == "general_info"
+    cfg = fake.calls[0]["config"]
+    assert cfg.response_mime_type == "application/json" and cfg.response_json_schema
+    assert cfg.thinking_config.thinking_budget == 0
+    # 400 uncached * 0.10 + 2000 cached * 0.01 + 300 out * 0.40 = 180 per 1M
+    assert usage.cost_usd == pytest.approx(0.00018)
+
+
+def test_gemini_wrapper_retries_rate_limit_then_succeeds(monkeypatch):
+    from google.genai import errors
+    from triage import gemini
+    async def no_sleep(_):
+        return None
+    monkeypatch.setattr(gemini.asyncio, "sleep", no_sleep)
+    fake = FakeGemini(gemini_response(json.dumps(analysis())),
+                      exc_seq=[errors.APIError(429, {"error": {"message": "quota"}})])
+    a, _ = asyncio.run(gemini.GeminiClassifier(client=fake).classify(_msg()))
+    assert len(fake.calls) == 2
+
+
+@pytest.mark.parametrize("text,finish", [("not json", "FinishReason.STOP"), (json.dumps(analysis()), "FinishReason.SAFETY"),
+                                         (json.dumps(analysis()), "FinishReason.MAX_TOKENS"), ("", "FinishReason.STOP")])
+def test_gemini_wrapper_rejects_bad_output(text, finish):
+    from triage.gemini import GeminiClassifier
+    with pytest.raises(ClassifierError):
+        asyncio.run(GeminiClassifier(client=FakeGemini(gemini_response(text, finish))).classify(_msg()))
+
+
+def test_gemini_schema_is_accepted_by_sdk_config():
+    from google.genai import types
+    from triage.gemini import GEMINI_SCHEMA
+    types.GenerateContentConfig(response_mime_type="application/json", response_json_schema=GEMINI_SCHEMA)
+    assert "additionalProperties" not in json.dumps(GEMINI_SCHEMA)
